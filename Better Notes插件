@@ -118,6 +118,16 @@ ${展望 ? `<h3><span style="color:#A61B41">🔭 展望</span></h3>${展望}` : 
 
 ${figureRes}
 `;
-
+res += `
+<h3><span style="color:#0D47A1">🧠 个人小结</span></h3>
+<div style="
+    border: 1px dashed #90CAF9;
+    padding: 10px;
+    background-color: #F5FAFF;
+    min-height: 80px;
+">
+    <p style="color:#999;">✏️ 在此填写你对本文的理解、评价、疑问或与自己研究的关系。</p>
+</div>
+`;
     return res;
 })()}
