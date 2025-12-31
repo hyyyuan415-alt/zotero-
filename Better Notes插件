@@ -1,8 +1,5 @@
 // @author mulei
 ${await (async () => {
-
-    /* ================= 工具函数 ================= */
-
     const getAnnotationsByTag = async (tagName) => {
         const pdfItem = await topItem.getBestAttachment();
         let result = "";
@@ -11,8 +8,7 @@ ${await (async () => {
                 const res = Zotero.EditorInstanceUtilities.serializeAnnotations(
                     [
                         {
-                            ...(await Zotero.Annotations.toJSON(annoItem)),
-                            attachmentItemID: annoItem.parentID
+                            ...(await Zotero.Annotations.toJSON(annoItem)), ...{ attachmentItemID: annoItem.parentID }
                         }
                     ]
                 );
@@ -22,71 +18,151 @@ ${await (async () => {
         return result;
     };
 
+    // 辅助函数：检测字符串是否包含中文字符
     const containsChinese = (text) => /[\u4e00-\u9fa5]/.test(text);
 
-    /* ================= 标题与作者 ================= */
+    // 提取影响因子
+    let impactFactor = Zotero.ZoteroStyle.api.renderCell(topItem, "publicationTags").textContent.trim();
+    let impactFactorValues = impactFactor.match(/\d+(\.\d+)?/g); // 提取数字部分
 
+    // 获取翻译标题，如果没有或者为空，则使用原始标题
     let titleTranslationMatch = topItem.getField("extra").match(/titleTranslation:(.+)/);
-    let titleTranslation = (titleTranslationMatch && titleTranslationMatch[1].trim())
-        ? titleTranslationMatch[1].trim()
-        : topItem.getField("title");
+    let titleTranslation = (titleTranslationMatch && titleTranslationMatch[1].trim()) ? titleTranslationMatch[1].trim() : topItem.getField("title");
 
+    // 检查标题是否为中文
     let isChineseTitle = containsChinese(topItem.getField("title"));
 
+    // 根据标题语言决定IFQ的显示方式
+    let impactFactorDisplay = isChineseTitle ? impactFactor : (impactFactorValues ? impactFactorValues.join(' / ') : '');
+
+    // 获取作者显示内容
     let creators = topItem.getCreators();
     let authorDisplay = "";
-    if (creators.length > 0) {
-        if (isChineseTitle) {
-            authorDisplay = `${creators[0].lastName} ${creators[0].firstName}`;
-        } else {
-            authorDisplay = `${creators[0].lastName} et al.`;
+    if (isChineseTitle) {
+        // 中文标题：显示第一作者全名，格式为“姓 前名”
+        if (creators.length > 0) {
+            let firstAuthor = creators[0];
+            let fullName = `${firstAuthor.lastName} ${firstAuthor.firstName}`;
+            authorDisplay = fullName;
+        }
+    } else {
+        // 非中文标题：显示第一作者姓氏并附加“et al.”
+        if (creators.length > 0) {
+            let firstAuthorLastName = creators[0].lastName;
+            authorDisplay = `${firstAuthorLastName} et al.`;
         }
     }
 
-    /* ================= 注释内容（与你的 Ethereal Style 完全一致） ================= */
+   // 获取各部分注释内容（与 Ethereal Style 完全一致）
+const 创新点 = await getAnnotationsByTag('创新点');
+const 背景 = await getAnnotationsByTag('背景');
+const 方法 = await getAnnotationsByTag('方法');
+const 结论 = await getAnnotationsByTag('结论');
+const 语句 = await getAnnotationsByTag('语句');
+const 展望 = await getAnnotationsByTag('展望');
 
-    const 创新点 = await getAnnotationsByTag('创新点');
-    const 背景   = await getAnnotationsByTag('背景');
-    const 方法   = await getAnnotationsByTag('方法');
-    const 结论   = await getAnnotationsByTag('结论');
-    const 语句   = await getAnnotationsByTag('语句');
-    const 展望   = await getAnnotationsByTag('展望');
 
-    /* ================= 生成笔记 ================= */
+    // 新增部分：提取 Figure 标签的内容
+    const getFigureAnnotations = async (item, tag) => {
+        let annots = item.getAnnotations();
+        annots = annots.filter((annot) => annot.getTags().map(tagObj => tagObj.tag).includes(tag));
+        return await Zotero.BetterNotes.api.convert.annotations2html(annots, { noteItem: targetNoteItem });
+    };
 
-    let res = `
-<h1>
-🔤${titleTranslation}
-(<span style="background-color:#B1A5E1">${topItem.getField("year")}</span>,
-<span style="background-color:#CBE1A5">${authorDisplay}</span>)
-${topItem.getField("journalAbbreviation")}
-</h1>
+    const attachments = Zotero.Items.get(topItem.getAttachments()).filter((i) => i.isPDFAttachment());
 
-<p><strong><span style="color:#283593">原名：</span></strong>${topItem.getField('title')}</p>
-<p><strong><span style="color:#283593">译名：</span></strong>${titleTranslation}</p>
-<p><strong><span style="color:#283593">作者：</span></strong>${authorDisplay}</p>
-<p><strong><span style="color:#283593">期刊：</span></strong>${topItem.getField('publicationTitle')}</p>
+    let figureRes = "";
+    for (let attachment of attachments) {
+        const annots = await getFigureAnnotations(attachment, 'Figure');
+        figureRes += annots ? annots : "";
+    }
+
+    const itemNotes = []; // 需要获取文献的相关笔记
+    const notes = itemNotes.filter(noteItem => noteItem.getTags().map(tagObj => tagObj.tag).includes('Figure'));
+    const notesWithTags = `${notes.map((noteItem) => {
+        const noteLink = Zotero.BetterNotes.api.convert.note2link(noteItem);
+        const noteLine = `<p style="color:red; background-color: #efe3da;">📜 Article Note:  <a href="${noteLink}">${noteItem.getNoteTitle() || noteLink}</a></p>
+<p>tags: ${noteItem.getTags().map(tagObj => tagObj.tag).join(', ')}</p>
+<p> </p>`;
+        return noteLine;
+    }).join("\n")}`;
+
+    figureRes += notesWithTags;
+
+    // 生成标题，处理中文和英文情况
+    let res = `<h1>🔤${titleTranslation} (<span style="background-color: #B1A5E1">${topItem.getField("year")}</span>, <span style="background-color: #CBE1A5">${authorDisplay}</span>) ${topItem.getField("journalAbbreviation")} (${impactFactorDisplay})</h1>
+<p><strong><span style="color: #283593">原名：</span></strong>${topItem.getField('title')}</p>
+<p><strong><span style="color: #283593">译名：</span></strong>${titleTranslation}</p>
+<p><strong><span style="color: #283593">作者：</span></strong>${authorDisplay}</p>
+<p><strong><span style="color: #283593">期刊：</span></strong>${topItem.getField('publicationTitle')}</p>
+<p><strong><span style="color: #283593">IFQ：</span></strong><span style="">
+
+${{
+let space = " ㅤㅤ ㅤㅤ"
+return Array.prototype.map.call(
+	Zotero.ZoteroStyle.api.renderCell(topItem, "publicationTags").childNodes,
+	e => {
+		e.innerText =  space + e.innerText + space;
+		return e.outerHTML
+	}
+	).join(space)
+}}$
+</p >
 
 ${(() => {
-    const doi = topItem.getField("DOI");
-    return doi
-        ? `<p><strong><span style="color:#283593">DOI：</span></strong>
-           <a href="https://doi.org/${doi}">${doi}</a></p>`
-        : `<p><strong><span style="color:#283593">URL：</span></strong>
-           <a href="${topItem.getField('url')}">${topItem.getField('url')}</a></p>`;
-})()}
+        const doi = topItem.getField("DOI");
+        if (doi) {
+            return `<b><span style="color: #283593">DOI：</span></strong> </b><a href="https://doi.org/${topItem.getField('DOI')}">${topItem.getField('DOI')}</a>`;
+        } else {
+            return `<b><span style="color: #283593">URL：</span></strong> </b><a href="${topItem.getField('url')}">${topItem.getField('url')}</a>`;
+        }
+    })()}
+<p><strong><span style="color: #283593">发表时间：</span></strong>${topItem.getField('date')}</p>
 
-<p><strong><span style="color:#283593">发表时间：</span></strong>${topItem.getField('date')}</p>
+<!-- 本地链接 -->
+<tr>
+  <td style="color:#193c47; background-color:#dbeedd; padding:8px;">
+    ${(() => {
+        const attachments = Zotero.Items.get(topItem.getAttachments());
+        if (attachments && attachments.length > 0) {
+            return `<b><span style="color: #283593">本地链接:</span> </b><a href="zotero://open-pdf/0_${attachments[0].key}">${attachments[0].getFilename()}</a>`;
+        } else {
+            return `<b><span style="color: #283593">本地链接:</span> </b>`;
+        }
+    })()}
+  </td>
+</tr>
+<p>
+<!-- 摘要 -->
+<tr>
+  <td style="color:#193c47; background-color:#dbeedd; padding:8px;">
+    ${(() => {
+        const abstractTranslation = topItem.getField('abstractTranslation');
+        if (abstractTranslation) {
+            return `<b><span style="color: #283593">摘要翻译：</span> </b><i>${abstractTranslation}</i>`;
+        } else {
+            return `<b><span style="color: #283593">摘要：</span> </b><i>${topItem.getField('abstractNote')}</i>`;
+        }
+    })()}
+  </td>
+</tr>
 
-<hr/>
+<!-- 生成标签笔记 -->
+${创新点 ? `<h3><span style="color:#A61B41">💡 创新点</span></h3>${创新点}` : ''}
 
-${创新点 ? `<h3>💡 创新点</h3>${创新点}` : ''}
-${背景   ? `<h3>🌏 背景</h3>${背景}`     : ''}
-${方法   ? `<h3>🔬 方法</h3>${方法}`     : ''}
-${结论   ? `<h3>📜 结论</h3>${结论}`     : ''}
-${语句   ? `<h3>🧾 语句摘录</h3>${语句}` : ''}
-${展望   ? `<h3>🔭 展望</h3>${展望}`     : ''}
+${背景 ? `<h3><span style="color:#A61B41">🌏 背景</span></h3>${背景}` : ''}
+
+${方法 ? `<h3><span style="color:#A61B41">🔬 方法</span></h3>${方法}` : ''}
+
+${结论 ? `<h3><span style="color:#A61B41">📜 结论</span></h3>${结论}` : ''}
+
+${语句 ? `<h3><span style="color:#A61B41">🧾 语句摘录</span></h3>${语句}` : ''}
+
+${展望 ? `<h3><span style="color:#A61B41">🔭 展望</span></h3>${展望}` : ''}
+
+
 `;
 
     return res;
 })()}
+我可以应用到我的这个上吗
